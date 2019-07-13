@@ -10,17 +10,23 @@
 // Definitions
 
 #define CONFIG_VERSION_MAJOR 1
-#define CONFIG_VERSION_MINOR 0
+#define CONFIG_VERSION_MINOR 1
 
 // I2C
 #define CONFIG_I2C_SDA 4
 #define CONFIG_I2C_SCL 5
 
-// Status LED
+// Status LED pin
 #define CONFIG_STATUS_LED 13
+
+// Test mode pin (activates test mode when pulled to ground)
+#define CONFIG_TEST_MODE_PIN 12
 
 // Total work timeout (s)
 #define CONFIG_WORK_TIMEOUT 15
+
+// Go to 1 minute sleep after WDT reset before resuming
+#define CONFIG_SLEEP_AFTER_WDT_RESET 60
 
 // Test mode: use test MQTT server
 //#define TEST_MODE
@@ -36,9 +42,9 @@ WiFiClient g_wifiClient;
 PubSubClient g_mqttClient(g_wifiClient);
 
 #ifdef TEST_MODE
-const bool g_testMode = true;
+bool g_testMode = true;
 #else
-const bool g_testMode = false;
+bool g_testMode = false;
 #endif
 
 volatile uint32_t g_measureOk = false; // measurement successful
@@ -52,7 +58,7 @@ float g_vcc = 0;
 float g_temperature = 0;
 float g_humidity = 0;
 
-uint32_t g_restartReason = 0;
+uint32_t g_resetReason = 0;
 uint32_t g_startTime = 0;
 
 ///////////////////////////////////////////////////////////////////
@@ -135,7 +141,7 @@ bool sendMqtt()
 {
     const char *srvName = g_testMode ? CONFIG_MQTT_HOST_TEST : CONFIG_MQTT_HOST;
     printf("Connecting to MQTT server at %s:%u\n", srvName, CONFIG_MQTT_PORT);
-    
+
     g_mqttClient.setServer(srvName, CONFIG_MQTT_PORT);
     if (! g_mqttClient.connect(CONFIG_MQTT_CLIENT_ID, CONFIG_MQTT_USERNAME, CONFIG_MQTT_PASSWORD))
     {
@@ -160,7 +166,7 @@ bool sendMqtt()
 
     if (g_testMode)
     {
-        snprintf(msgBuf, sizeof(msgBuf), "%u", g_restartReason);
+        snprintf(msgBuf, sizeof(msgBuf), "%u", g_resetReason);
         if (g_mqttClient.publish(CONFIG_MQTT_TOPIC "/RST", msgBuf))
             ++nSent;
         ESP.wdtFeed();
@@ -209,17 +215,43 @@ void setup()
 #ifdef CONFIG_STATUS_LED
     pinMode(CONFIG_STATUS_LED, OUTPUT);
 #endif
+#ifdef CONFIG_TEST_MODE_PIN
+    pinMode(CONFIG_TEST_MODE_PIN, INPUT_PULLUP);
+#endif
     Serial.begin(115200);
 
     printf("\n\nESPSolarMeteo ver.%u.%u\n", CONFIG_VERSION_MAJOR, CONFIG_VERSION_MINOR);
     g_startTime = millis();
 
     const rst_info *rstInfo = system_get_rst_info();
-    g_restartReason = rstInfo->reason;
-    printf("Restart reason: %u\n", g_restartReason);
+    g_resetReason = rstInfo->reason;
+    printf("Reset reason: %u\n", g_resetReason);
+
+#ifdef CONFIG_TEST_MODE_PIN
+    if (digitalRead(CONFIG_TEST_MODE_PIN) == 0)
+    {
+        printf("Test mode activated by pin %u\n", CONFIG_TEST_MODE_PIN);
+        g_testMode = true;
+    }
+#endif
 
     ESP.wdtDisable(); // disable SW watchdog to force hardware watchdog reset
     ESP.wdtFeed();
+
+    if (g_resetReason == REASON_WDT_RST)
+    {
+        uint32_t deepSleepTime = CONFIG_SLEEP_AFTER_WDT_RESET;
+#ifdef TEST_DEEPSLEEP
+        deepSleepTime = TEST_DEEPSLEEP;
+#endif
+        printf("Reset caused by hardware WDT\n");
+        printf("Going to deep sleep for %us before resuming operations\n", deepSleepTime);
+        
+        ESP.wdtFeed();
+        system_deep_sleep(1000 * 1000 * deepSleepTime);
+
+        return;
+    }
 
     g_adc = analogRead(0);
     g_vcc = adcToVoltage(g_adc);
