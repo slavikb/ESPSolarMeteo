@@ -1,7 +1,7 @@
 #include <ESP8266WiFi.h>
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
-#include <Adafruit_AM2320.h>
+#include <Adafruit_BME280.h>
 #include <PubSubClient.h>
 
 #include "local_config.h"
@@ -10,7 +10,7 @@
 // Definitions
 
 #define CONFIG_VERSION_MAJOR 1
-#define CONFIG_VERSION_MINOR 1
+#define CONFIG_VERSION_MINOR 2
 
 // I2C
 #define CONFIG_I2C_SDA 4
@@ -36,7 +36,7 @@
 ///////////////////////////////////////////////////////////////////
 // Globals
 
-Adafruit_AM2320 g_am2320; // 1-VDD 2-SDA 3-GND 4-SCL, (SDA,SCL 10K pullup)
+Adafruit_BME280 g_bme280; // 1-VDD 2-GND 3-SCL 4-SDA
 
 WiFiClient g_wifiClient;
 PubSubClient g_mqttClient(g_wifiClient);
@@ -57,6 +57,7 @@ uint32_t g_adc = 0;
 float g_vcc = 0;
 float g_temperature = 0;
 float g_humidity = 0;
+float g_pressure = 0;
 
 uint32_t g_resetReason = 0;
 uint32_t g_startTime = 0;
@@ -97,21 +98,31 @@ uint32_t calcDeepSleepTime()
     return sleepTime;
 }
 
-bool doMeasurement(float& temp, float& hum)
+bool isValid(float v)
+{
+    return !isnan(v) && v != 0;
+}
+
+bool doMeasurement(float& temp, float& hum, float& prs)
 {
 #ifdef CONFIG_I2C_SDA
     Wire.begin(CONFIG_I2C_SDA,CONFIG_I2C_SCL);
-    g_am2320.begin();
-    temp = g_am2320.readTemperature();
-    hum = g_am2320.readHumidity();
 
-    if (isnan(temp) || isnan(hum))
-      return false;
+    g_bme280.begin();
+    g_bme280.setSampling(Adafruit_BME280::MODE_SLEEP);
+    g_bme280.takeForcedMeasurement();
+    g_bme280.takeForcedMeasurement();
 
-    return true;
-#else
-    return false;
+    temp = g_bme280.readTemperature();
+    hum = g_bme280.readHumidity();
+    prs = g_bme280.readPressure();
+
+    g_bme280.setSampling(Adafruit_BME280::MODE_SLEEP);
+
+    if (isValid(temp) || isValid(hum) || isValid(prs))
+        return true;
 #endif
+    return false;
 }
 
 bool connectWiFi()
@@ -152,10 +163,11 @@ bool sendMqtt()
     printf("Publishing data\n");
     unsigned nSent = 0;
 
-    char msgBuf[32];
     if (g_mqttClient.publish(CONFIG_MQTT_TOPIC "/status", "online"))
         ++nSent;
     ESP.wdtFeed();
+
+    char msgBuf[32];
 
     snprintf(msgBuf, sizeof(msgBuf), "%.2f", g_vcc);
     if (g_mqttClient.publish(CONFIG_MQTT_TOPIC "/U1", msgBuf))
@@ -179,19 +191,31 @@ bool sendMqtt()
         MSGCNT += 2;
     }
 
-    if (g_measureOk)
+    if (isValid(g_temperature))
     {
         snprintf(msgBuf, sizeof(msgBuf), "%.2f", g_temperature);
         if (g_mqttClient.publish(CONFIG_MQTT_TOPIC "/T1", msgBuf))
             ++nSent;
         ESP.wdtFeed();
+        MSGCNT += 1;
+    }
 
+    if (isValid(g_humidity))
+    {
         snprintf(msgBuf, sizeof(msgBuf), "%.0f", g_humidity);
         if (g_mqttClient.publish(CONFIG_MQTT_TOPIC "/H1", msgBuf))
             ++nSent;
         ESP.wdtFeed();
+        MSGCNT += 1;
+    }
 
-        MSGCNT += 2;
+    if (isValid(g_pressure))
+    {
+        snprintf(msgBuf, sizeof(msgBuf), "%.0f", g_pressure);
+        if (g_mqttClient.publish(CONFIG_MQTT_TOPIC "/P1", msgBuf))
+            ++nSent;
+        ESP.wdtFeed();
+        MSGCNT += 1;
     }
 
     g_mqttClient.disconnect();
@@ -262,21 +286,22 @@ void setup()
 
     g_wifiOk = connectWiFi();
 
-    g_measureOk = doMeasurement(g_temperature, g_humidity);
+    g_measureOk = doMeasurement(g_temperature, g_humidity, g_pressure);
     if (g_measureOk)
-        printf("Am2320: Temperature=%.2f C  Humidity=%.1f %%\n", g_temperature, g_humidity);
+        printf("BME280: Temperature=%.2f C  Humidity=%.1f %%  Pressure=%.0f Pa\n", g_temperature, g_humidity, g_pressure);
     else
-        printf("Am2320: Measurement failed\n");
+        printf("BME280: Measurement failed\n");
 
     if (g_wifiOk)
         g_sendOk = sendMqtt();
 
     LedOn(false);
 
-    // report status using 1,2,3 blinks
+    // report status using 1,2,3,4 blinks
     // 1 blink: measure done
     // 2 blinks: wifi ok
-    // 3 blinks: data sent
+    // 3 blinks: data sent to test server
+    // 4 blinks; data sent to public server
     int nBlink = 0;
     if (g_sendOk)
         nBlink = g_testMode ? 3 : 4;
@@ -286,10 +311,10 @@ void setup()
     for (int i = 0; i < nBlink; ++i)
     {
         ESP.wdtFeed();
-        delay(200);
+        delay(150);
         LedOn(true);
         ESP.wdtFeed();
-        delay(200);
+        delay(150);
         LedOn(false);
     }
 
