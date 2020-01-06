@@ -20,6 +20,13 @@
 // Sleep interval for U <= CONFIG_VOLTAGE_MIN
 #define CONFIG_SLEEP_TIME_MAX 60*60
 
+// Low battery wakeup delay logic
+// Avoid repeated start attempts until battery is enough charged
+// Battery voltage 'charged' level
+#define CONFIG_LOW_BATTERY_START_LEVEL 3.7
+// Forced delay for startup reason other than deep sleep
+#define CONFIG_LOW_BATTERY_START_DELAY 60
+
 // MQTT server settings
 
 // Enable data upload via MQTT

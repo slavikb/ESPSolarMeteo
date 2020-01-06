@@ -10,7 +10,7 @@
 // Definitions
 
 #define CONFIG_VERSION_MAJOR 1
-#define CONFIG_VERSION_MINOR 2
+#define CONFIG_VERSION_MINOR 3
 
 // I2C
 #define CONFIG_I2C_SDA 4
@@ -282,6 +282,25 @@ void setup()
     printf("Vadc=%u  Vcc=%.2f\n", g_adc, g_vcc);
 
     LedOn(true);
+
+    if (g_resetReason != REASON_DEEP_SLEEP_AWAKE)
+    {
+        // Awaken not by deep sleep - check battery level
+        if (g_vcc < CONFIG_LOW_BATTERY_START_LEVEL)
+        {
+            // Low battery level, go to deep sleep before normal operations
+            printf("Low-battery startup sleep for %us\n", CONFIG_LOW_BATTERY_START_DELAY);
+        
+            ESP.wdtFeed();
+            system_deep_sleep(1000 * 1000 * CONFIG_LOW_BATTERY_START_DELAY);
+
+            delay(20);
+            LedOn(false);
+            
+            return;
+        }
+    }
+
     ESP.wdtFeed();
 
     g_wifiOk = connectWiFi();
