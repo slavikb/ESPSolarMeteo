@@ -10,11 +10,14 @@
 // Definitions
 
 #define CONFIG_VERSION_MAJOR 1
-#define CONFIG_VERSION_MINOR 3
+#define CONFIG_VERSION_MINOR 4
 
 // I2C
 #define CONFIG_I2C_SDA 4
 #define CONFIG_I2C_SCL 5
+
+// BME280 address
+#define BME280_ADDR BME280_ADDRESS_ALTERNATE
 
 // Status LED pin
 #define CONFIG_STATUS_LED 13
@@ -107,8 +110,11 @@ bool doMeasurement(float& temp, float& hum, float& prs)
 {
 #ifdef CONFIG_I2C_SDA
     Wire.begin(CONFIG_I2C_SDA,CONFIG_I2C_SCL);
+    //Wire.setClock(50000); // for software-driven ESP8266 implementation
 
-    g_bme280.begin();
+    if (! g_bme280.begin(BME280_ADDR))
+        return false;
+
     g_bme280.setSampling(Adafruit_BME280::MODE_SLEEP);
     g_bme280.takeForcedMeasurement();
     g_bme280.takeForcedMeasurement();
@@ -127,7 +133,7 @@ bool doMeasurement(float& temp, float& hum, float& prs)
 
 bool connectWiFi()
 {
-    printf("Connecting to WiFi...");
+    printf("Connecting to WiFi (%s) ...", CONFIG_WIFI_SSID);
     fflush(stdout);
     WiFi.mode(WIFI_STA);
     WiFi.begin(CONFIG_WIFI_SSID, CONFIG_WIFI_PASS);
@@ -163,9 +169,9 @@ bool sendMqtt()
     printf("Publishing data\n");
     unsigned nSent = 0;
 
-    if (g_mqttClient.publish(CONFIG_MQTT_TOPIC "/status", "online"))
-        ++nSent;
-    ESP.wdtFeed();
+    //if (g_mqttClient.publish(CONFIG_MQTT_TOPIC "/status", "online"))
+    //    ++nSent;
+    //ESP.wdtFeed();
 
     char msgBuf[32];
 
@@ -174,7 +180,7 @@ bool sendMqtt()
         ++nSent;
     ESP.wdtFeed();
 
-    unsigned MSGCNT = 2; // expected send count
+    unsigned MSGCNT = 1; // expected sent messages count
 
     if (g_testMode)
     {
