@@ -10,7 +10,7 @@
 // Definitions
 
 #define CONFIG_VERSION_MAJOR 1
-#define CONFIG_VERSION_MINOR 4
+#define CONFIG_VERSION_MINOR 5
 
 // I2C
 #define CONFIG_I2C_SDA 4
@@ -42,7 +42,10 @@
 Adafruit_BME280 g_bme280; // 1-VDD 2-GND 3-SCL 4-SDA
 
 WiFiClient g_wifiClient;
+
+#if CONFIG_SERVER_USE_MQTT
 PubSubClient g_mqttClient(g_wifiClient);
+#endif
 
 #ifdef TEST_MODE
 bool g_testMode = true;
@@ -52,7 +55,7 @@ bool g_testMode = false;
 
 volatile uint32_t g_measureOk = false; // measurement successful
 volatile uint32_t g_wifiOk = false; // WiFi connection successful
-volatile uint32_t g_sendOk = false; // MQTT sending successful
+volatile uint32_t g_sendOk = false; // Server send successful
 
 volatile uint32_t g_shutdown = 0; // flag: shutting down
 
@@ -154,6 +157,8 @@ bool connectWiFi()
     return true;
 }
 
+#if CONFIG_SERVER_USE_MQTT
+
 bool sendMqtt()
 {
     const char *srvName = g_testMode ? CONFIG_MQTT_HOST_TEST : CONFIG_MQTT_HOST;
@@ -237,6 +242,80 @@ bool sendMqtt()
     return true;
 }
 
+#else // CONFIG_SERVER_USE_MQTT
+
+bool sendTcp()
+{
+    char msgBuf[256];
+    char *p = msgBuf;
+
+    printf("Sending data to TCP server %s:%u\n", CONFIG_TCP_HOST, CONFIG_TCP_PORT);
+
+    WiFiClient sock;
+    if (!sock.connect(CONFIG_TCP_HOST, CONFIG_TCP_PORT))
+        return false;
+
+    ESP.wdtFeed();
+
+    snprintf(p, msgBuf + sizeof(msgBuf) - p, "#%s\n#U1#%.2f\n", CONFIG_SERVER_DEVICE_ID, g_vcc);
+    p += strlen(p);
+
+    if (g_testMode)
+    {
+        snprintf(p, msgBuf + sizeof(msgBuf) - p, "#RST#%u\n#ADC#%u\n", g_resetReason, g_adc);
+        p += strlen(p);
+    }
+
+    if (isValid(g_temperature))
+    {
+        snprintf(p, msgBuf + sizeof(msgBuf) - p, "#T1#%.2f\n", g_temperature);
+        p += strlen(p);
+    }
+
+    if (isValid(g_humidity))
+    {
+        snprintf(p, msgBuf + sizeof(msgBuf) - p, "#H1#%.2f\n", g_humidity);
+        p += strlen(p);
+    }
+
+    if (isValid(g_pressure))
+    {
+        snprintf(p, msgBuf + sizeof(msgBuf) - p, "#P1#%.0f\n", g_pressure);
+        p += strlen(p);
+    }
+
+    sprintf(p,"##");
+    p += strlen(p);
+
+    const size_t sz = p - msgBuf;
+    sock.write((const uint8_t *)msgBuf, sz);
+
+    ESP.wdtFeed();
+    printf("Waiting fot server reply\n");
+
+    // wait for server reply
+    unsigned long t0 = millis();
+    while(sock.available() == 0)
+    {
+        if ((millis() - t0) > CONFIG_TCP_REPLY_TIMEOUT)
+        {
+            printf("No reply from server\n");
+            return false;
+        }
+        delay(10);
+        ESP.wdtFeed();
+    }
+
+    ESP.wdtFeed();
+    sock.stop();
+
+    ESP.wdtFeed();
+    printf("Data sent successfully\n");
+    return true;
+}
+
+#endif
+
 ///////////////////////////////////////////////////////////////////
 // Main
 
@@ -318,7 +397,13 @@ void setup()
         printf("BME280: Measurement failed\n");
 
     if (g_wifiOk)
+    {
+#if CONFIG_SERVER_USE_MQTT
         g_sendOk = sendMqtt();
+#else
+        g_sendOk = sendTcp();
+#endif
+    }
 
     LedOn(false);
 

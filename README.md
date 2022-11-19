@@ -8,8 +8,7 @@ MIT License
 
 ESPSolarMeteo is a (yet another) ESP8266-based meteostation.
 The design goal is to build station that can work unattended without
-external power. It is powered by LiPo battery that is recharged by small solar
-panel.
+external power. It is powered by LiPo battery that is recharged by a small solar panel.
 
 The working cycle is optimized for low power consumption. The station awakes
 from deep sleep at 10 (or more) minutes, measures environmental conditions,
@@ -19,13 +18,13 @@ sends data to MQTT server and goes to sleep again.
 
 I have added some external circuitry: 
 - Reset button
-- 10/40K voltage divisor for VCC self-measurement 
+- 10K/40K voltage divisor for VCC self-measurement 
 - MCP100 3.15V power supervisory circuit connected to CH_PD pin.
 
 ### Data publishing
 
 Measured data (temperature, humidity and self-monitoring data) is send to
-NarodMon (http://www.narodmon.ru) using MQTT protocol.
+NarodMon (http://www.narodmon.ru) using MQTT or TCP protocol.
 
 ### Indication
 
